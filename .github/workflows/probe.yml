@@ -1,0 +1,39 @@
+name: wif-probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: OIDC claims (our token)
+        run: |
+          set -euo pipefail
+          AUD="https://iam.googleapis.com/projects/823469418460/locations/global/workloadIdentityPools/measurables-tracking/providers/angular"
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUD" | jq -r .value)
+          echo "$TOKEN" > /tmp/oidc.jwt
+          python3 - <<'PY'
+          import base64,json
+          t=open('/tmp/oidc.jwt').read().strip().split('.')[1]
+          t+='='*(-len(t)%4)
+          print('CLAIMS:', json.dumps(json.loads(base64.urlsafe_b64decode(t)), indent=1))
+          PY
+      - name: Exchange via google-github-actions/auth
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: internal-200822
+          workload_identity_provider: projects/823469418460/locations/global/workloadIdentityPools/measurables-tracking/providers/angular
+          service_account: measures-uploader@internal-200822.iam.gserviceaccount.com
+      - name: Report outcome
+        run: |
+          echo "auth outcome: ${{ steps.auth.outcome }}"
+          if [ "${{ steps.auth.outcome }}" = "success" ]; then
+            echo "TOKEN_LEN=${#ACCESS_TOKEN}"
+            curl -sS "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=$ACCESS_TOKEN" || true
+          fi
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}

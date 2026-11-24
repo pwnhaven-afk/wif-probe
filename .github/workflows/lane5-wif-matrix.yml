@@ -32,6 +32,9 @@ jobs:
           - name: cloud-cpp
             provider: projects/49427430084/locations/global/workloadIdentityPools/github-wif-pool/providers/github-wif-provider
             sa: github-actions@cloud-cpp-identity-federation.iam.gserviceaccount.com
+          - name: alloydb-java
+            provider: projects/1024380149854/locations/global/workloadIdentityPools/github-external-accounts/providers/gh-provider-v0
+            sa: alloydb-java-connector@gh-13a715-626135758.iam.gserviceaccount.com
           - name: knowledge-catalog-direct
             provider: projects/305452601764/locations/global/workloadIdentityPools/builders/providers/github
             direct: true

